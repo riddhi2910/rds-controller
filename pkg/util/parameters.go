@@ -15,8 +15,6 @@ package util
 
 import (
 	"fmt"
-
-	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 )
 
 var (
@@ -28,26 +26,20 @@ var (
 // or a DB Cluster Parameter Group
 type Parameters map[string]*string
 
-// NewErrUnknownParameter generates an ACK terminal error about
+// NewErrUnknownParameter generates an ACK error about
 // an unknown parameter
 func NewErrUnknownParameter(name string) error {
-	// This is a terminal error because unless the user removes this parameter
-	// from their list of parameter overrides, we will not be able to get the
-	// resource into a synced state.
-	return ackerr.NewTerminalError(
-		fmt.Errorf("%w: %s", ErrUnknownParameter, name),
-	)
+	// Changed from Terminal to regular error since it should be
+	// recoverable when the parameter is removed from the spec
+	return fmt.Errorf("%w: %s", ErrUnknownParameter, name)
 }
 
-// NewErrUnmodifiableParameter generates an ACK terminal error about
+// NewErrUnmodifiableParameter generates an ACK error about
 // a parameter that may not be modified
 func NewErrUnmodifiableParameter(name string) error {
-	// This is a terminal error because unless the user removes this parameter
-	// from their list of parameter overrides, we will not be able to get the
-	// resource into a synced state.
-	return ackerr.NewTerminalError(
-		fmt.Errorf("%w: %s", ErrUnmodifiableParameter, name),
-	)
+	// Changed from Terminal to regular error since it should be
+	// recoverable when the parameter is removed from the spec
+	return fmt.Errorf("%w: %s", ErrUnmodifiableParameter, name)
 }
 
 // GetParametersDifference compares two Parameters maps and returns the
