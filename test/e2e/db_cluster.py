@@ -16,19 +16,40 @@
 import datetime
 import time
 import typing
+import logging
+import botocore.exceptions
 
 import boto3
 import pytest
 
-DEFAULT_WAIT_UNTIL_TIMEOUT_SECONDS = 60*10
+DEFAULT_WAIT_UNTIL_TIMEOUT_SECONDS = 60*20  # Increased from 60*10
 DEFAULT_WAIT_UNTIL_INTERVAL_SECONDS = 15
-DEFAULT_WAIT_UNTIL_DELETED_TIMEOUT_SECONDS = 60*10
+DEFAULT_WAIT_UNTIL_DELETED_TIMEOUT_SECONDS = 60*20  # Increased from 60*10
 DEFAULT_WAIT_UNTIL_DELETED_INTERVAL_SECONDS = 15
+MAX_RETRIES = 5
+RETRY_DELAY_SECONDS = 5
 
 ClusterMatchFunc = typing.NewType(
     'ClusterMatchFunc',
     typing.Callable[[dict], bool],
 )
+
+def retry_on_error(func, *args, **kwargs):
+    """Retry a function with exponential backoff on certain errors."""
+    retry_count = 0
+    while True:
+        try:
+            return func(*args, **kwargs)
+        except (botocore.exceptions.ClientError, 
+                botocore.exceptions.BotoCoreError,
+                botocore.exceptions.ConnectionError) as e:
+            retry_count += 1
+            if retry_count > MAX_RETRIES:
+                logging.error(f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}")
+                raise
+            sleep_time = RETRY_DELAY_SECONDS * (2 ** (retry_count - 1))
+            logging.warning(f"Retrying after error: {str(e)}. Sleeping for {sleep_time}s. Retry {retry_count}/{MAX_RETRIES}")
+            time.sleep(sleep_time)
 
 class AttributeMatcher:
     def __init__(self, match_on: str, expected_value: typing.Any):
@@ -117,13 +138,16 @@ def get(db_cluster_id):
 
     If no such DB cluster exists, returns None.
     """
-    c = boto3.client('rds')
-    try:
-        resp = c.describe_db_clusters(DBClusterIdentifier=db_cluster_id)
-        assert len(resp['DBClusters']) == 1
-        return resp['DBClusters'][0]
-    except c.exceptions.DBClusterNotFoundFault:
-        return None
+    def _get_cluster(cluster_id):
+        c = boto3.client('rds')
+        try:
+            resp = c.describe_db_clusters(DBClusterIdentifier=cluster_id)
+            assert len(resp['DBClusters']) == 1
+            return resp['DBClusters'][0]
+        except c.exceptions.DBClusterNotFoundFault:
+            return None
+
+    return retry_on_error(_get_cluster, db_cluster_id)
 
 
 def get_tags(db_cluster_arn):

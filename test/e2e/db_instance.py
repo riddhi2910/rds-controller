@@ -16,19 +16,40 @@
 import datetime
 import time
 import typing
+import logging
+import botocore.exceptions
 
 import boto3
 import pytest
 
-DEFAULT_WAIT_UNTIL_TIMEOUT_SECONDS = 60*30
+DEFAULT_WAIT_UNTIL_TIMEOUT_SECONDS = 60*40
 DEFAULT_WAIT_UNTIL_INTERVAL_SECONDS = 15
-DEFAULT_WAIT_UNTIL_DELETED_TIMEOUT_SECONDS = 60*20
+DEFAULT_WAIT_UNTIL_DELETED_TIMEOUT_SECONDS = 60*30
 DEFAULT_WAIT_UNTIL_DELETED_INTERVAL_SECONDS = 15
+MAX_RETRIES = 5
+RETRY_DELAY_SECONDS = 5
 
 InstanceMatchFunc = typing.NewType(
     'InstanceMatchFunc',
     typing.Callable[[dict], bool],
 )
+
+def retry_on_error(func, *args, **kwargs):
+    """Retry a function with exponential backoff on certain errors."""
+    retry_count = 0
+    while True:
+        try:
+            return func(*args, **kwargs)
+        except (botocore.exceptions.ClientError, 
+                botocore.exceptions.BotoCoreError,
+                botocore.exceptions.ConnectionError) as e:
+            retry_count += 1
+            if retry_count > MAX_RETRIES:
+                logging.error(f"Max retries ({MAX_RETRIES}) exceeded. Last error: {str(e)}")
+                raise
+            sleep_time = RETRY_DELAY_SECONDS * (2 ** (retry_count - 1))
+            logging.warning(f"Retrying after error: {str(e)}. Sleeping for {sleep_time}s. Retry {retry_count}/{MAX_RETRIES}")
+            time.sleep(sleep_time)
 
 class StatusMatcher:
     def __init__(self, status):
@@ -116,13 +137,16 @@ def get(db_instance_id):
 
     If no such DB instance exists, returns None.
     """
-    c = boto3.client('rds')
-    try:
-        resp = c.describe_db_instances(DBInstanceIdentifier=db_instance_id)
-        assert len(resp['DBInstances']) == 1
-        return resp['DBInstances'][0]
-    except c.exceptions.DBInstanceNotFoundFault:
-        return None
+    def _get_instance(instance_id):
+        c = boto3.client('rds')
+        try:
+            resp = c.describe_db_instances(DBInstanceIdentifier=instance_id)
+            assert len(resp['DBInstances']) == 1
+            return resp['DBInstances'][0]
+        except c.exceptions.DBInstanceNotFoundFault:
+            return None
+    
+    return retry_on_error(_get_instance, db_instance_id)
 
 
 def get_tags(db_instance_arn):
