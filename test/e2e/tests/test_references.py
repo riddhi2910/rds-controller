@@ -252,6 +252,27 @@ def ref_db_instance(db_cluster_name, pg_name):
 @service_marker
 @pytest.mark.canary
 class TestReferences:
+    # Custom implementation to replace the missing is_synced function
+    def _custom_is_synced(self, ref_or_dict):
+        """Custom implementation to check if a resource is synced based on its conditions"""
+        try:
+            # Get the resource if we were passed a reference
+            resource = ref_or_dict
+            if hasattr(ref_or_dict, 'kind') and hasattr(ref_or_dict, 'name'):
+                resource = k8s.get_resource(ref_or_dict)
+            
+            # Check if the resource has status and conditions
+            if isinstance(resource, dict) and 'status' in resource and 'conditions' in resource['status']:
+                for condition in resource['status']['conditions']:
+                    if condition.get('type') == 'ACK.ResourceSynced':
+                        return condition.get('status') == 'True'
+            
+            # If we can't find the condition, assume not synced
+            return False
+        except Exception as e:
+            logging.warning(f"Error in custom is_synced: {str(e)}")
+            return False
+
     def _wait_for_sync(self, ref, resource_type, resource_name, max_attempts=10):
         """Helper method to wait for a resource to be synced with retries"""
         from time import sleep
@@ -279,8 +300,8 @@ class TestReferences:
                 # Ensure we have a proper reference
                 proper_ref = ensure_fn(latest_ref, resource_name)
                 
-                # Check if it's synced
-                synced = condition.is_synced(proper_ref)
+                # Use the custom is_synced function instead of the missing one
+                synced = self._custom_is_synced(proper_ref)
                 
                 if synced:
                     logging.info(f"{resource_type} {resource_name} is now synced")
