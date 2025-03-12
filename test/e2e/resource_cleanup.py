@@ -192,4 +192,90 @@ def cleanup_old_resources():
             
     logging.info(f"Cleanup complete. Submitted deletion for {deleted_count} resources.")
     
+    return deleted_count
+
+def force_cleanup_test_resources():
+    """Force cleanup any resources that might have been created during tests.
+    
+    This is more aggressive than the cleanup_old_resources function and is 
+    intended to be called at the end of a test run to ensure all test
+    resources are properly removed.
+    """
+    logging.info("Performing forced cleanup of test resources...")
+    
+    # Clean up in the right order to avoid dependency issues
+    cleanup_order = [
+        "db_instance",
+        "db_cluster", 
+        "db_snapshot",
+        "db_cluster_snapshot",
+        "global_cluster",
+        "db_parameter_group",
+        "db_cluster_parameter_group"
+    ]
+    
+    deleted_count = 0
+    rds_client = boto3.client('rds')
+    
+    for resource_type in cleanup_order:
+        pattern = RESOURCE_PATTERNS.get(resource_type)
+        logging.info(f"Forcibly cleaning up {resource_type} resources...")
+        
+        try:
+            # Find all resources matching the patterns, regardless of age
+            resources = []
+            pattern_regex = re.compile(pattern)
+            
+            if resource_type == "db_instance":
+                try:
+                    response = rds_client.describe_db_instances()
+                    for instance in response.get('DBInstances', []):
+                        if pattern_regex.match(instance['DBInstanceIdentifier']):
+                            logging.info(f"Found test DB instance: {instance['DBInstanceIdentifier']}")
+                            resources.append(instance)
+                except Exception as e:
+                    logging.warning(f"Error listing {resource_type}: {str(e)}")
+                
+            elif resource_type == "db_cluster":
+                try:
+                    response = rds_client.describe_db_clusters()
+                    for cluster in response.get('DBClusters', []):
+                        if pattern_regex.match(cluster['DBClusterIdentifier']):
+                            logging.info(f"Found test DB cluster: {cluster['DBClusterIdentifier']}")
+                            resources.append(cluster)
+                except Exception as e:
+                    logging.warning(f"Error listing {resource_type}: {str(e)}")
+                
+            elif resource_type == "db_parameter_group":
+                try:
+                    response = rds_client.describe_db_parameter_groups()
+                    for pg in response.get('DBParameterGroups', []):
+                        if pattern_regex.match(pg['DBParameterGroupName']):
+                            logging.info(f"Found test DB parameter group: {pg['DBParameterGroupName']}")
+                            resources.append(pg)
+                except Exception as e:
+                    logging.warning(f"Error listing {resource_type}: {str(e)}")
+                
+            elif resource_type == "db_cluster_parameter_group":
+                try:
+                    response = rds_client.describe_db_cluster_parameter_groups()
+                    for cpg in response.get('DBClusterParameterGroups', []):
+                        if pattern_regex.match(cpg['DBClusterParameterGroupName']):
+                            logging.info(f"Found test DB cluster parameter group: {cpg['DBClusterParameterGroupName']}")
+                            resources.append(cpg)
+                except Exception as e:
+                    logging.warning(f"Error listing {resource_type}: {str(e)}")
+                
+            # Delete all found resources
+            for resource in resources:
+                try:
+                    if delete_resource(rds_client, resource_type, resource):
+                        deleted_count += 1
+                except Exception as e:
+                    logging.warning(f"Error deleting {resource_type}: {str(e)}")
+        
+        except Exception as e:
+            logging.warning(f"Error in cleanup for {resource_type}: {str(e)}")
+    
+    logging.info(f"Force cleanup complete. Submitted deletion for {deleted_count} resources.")
     return deleted_count 

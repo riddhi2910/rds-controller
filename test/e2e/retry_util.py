@@ -93,4 +93,63 @@ def retry_on_api_error(func, *args, **kwargs):
     def wrapped():
         return func(*args, **kwargs)
     
-    return wrapped() 
+    return wrapped()
+
+def wait_for_resources_deleted(resource_type: str, name_pattern: str, timeout_seconds: int = 300):
+    """Wait for all resources of a certain type matching a pattern to be deleted.
+    
+    This helps prevent test failures due to background cleanup still in progress.
+    
+    Args:
+        resource_type: Type of resource (e.g., "db_instance")
+        name_pattern: Regex pattern to match resource names
+        timeout_seconds: Maximum time to wait for resources to be deleted
+    """
+    import re
+    import time
+    from datetime import datetime, timedelta
+    import logging
+    import boto3
+    
+    logging.info(f"Waiting for {resource_type} resources matching '{name_pattern}' to be deleted...")
+    
+    rds_client = boto3.client('rds')
+    pattern = re.compile(name_pattern)
+    now = datetime.now()
+    timeout = now + timedelta(seconds=timeout_seconds)
+    
+    while datetime.now() < timeout:
+        resources_found = 0
+        
+        try:
+            if resource_type == "db_instance":
+                paginator = rds_client.get_paginator('describe_db_instances')
+                for page in paginator.paginate():
+                    for instance in page.get('DBInstances', []):
+                        if pattern.match(instance['DBInstanceIdentifier']):
+                            resources_found += 1
+                            status = instance.get('DBInstanceStatus', 'unknown')
+                            logging.info(f"DB instance {instance['DBInstanceIdentifier']} still exists with status: {status}")
+                            
+            elif resource_type == "db_cluster":
+                paginator = rds_client.get_paginator('describe_db_clusters')
+                for page in paginator.paginate():
+                    for cluster in page.get('DBClusters', []):
+                        if pattern.match(cluster['DBClusterIdentifier']):
+                            resources_found += 1
+                            status = cluster.get('Status', 'unknown')
+                            logging.info(f"DB cluster {cluster['DBClusterIdentifier']} still exists with status: {status}")
+            
+            if resources_found == 0:
+                logging.info(f"All {resource_type} resources matching '{name_pattern}' have been deleted")
+                return True
+                
+            logging.info(f"Found {resources_found} {resource_type}(s) still being deleted, waiting...")
+            time.sleep(15)  # Check every 15 seconds
+            
+        except Exception as e:
+            logging.warning(f"Error checking for {resource_type} deletion: {str(e)}")
+            time.sleep(5)
+    
+    logging.warning(f"Timed out waiting for {resource_type} resources to be deleted")
+    return False 

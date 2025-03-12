@@ -26,6 +26,7 @@ from e2e.replacement_values import REPLACEMENT_VALUES
 from e2e import db_cluster_parameter_group
 from e2e import tag
 from e2e import condition
+from e2e.db_cluster_parameter_group import ensure_resource_reference
 
 RESOURCE_PLURAL = 'dbclusterparametergroups'
 
@@ -177,7 +178,8 @@ class TestDBClusterParameterGroup:
 
         # Check that the resource has an error condition
         cr = k8s.get_resource(ref)
-        condition.assert_synced(cr)
+        proper_ref = ensure_resource_reference(cr, resource_name)
+        condition.assert_synced(proper_ref)
         conditions = cr["status"]["conditions"]
         error_found = False
         for c in conditions:
@@ -200,4 +202,5 @@ class TestDBClusterParameterGroup:
 
         # Verify the error condition is cleared
         cr = k8s.get_resource(ref)
-        condition.assert_synced(cr)
+        proper_ref = ensure_resource_reference(cr, resource_name)
+        condition.assert_synced(proper_ref)
